@@ -1,0 +1,35 @@
+# Engagement-specific outputs (this repo is the methodology, not the engagements)
+inventories/
+findings/
+extracts/
+open-questions/
+deliverables/
+EXECUTION_LOG.md
+CONTINUATION.md
+KNOWLEDGE_BASE.md
+
+# Decrypted secret/parameter values from audits, never commit
+**/secrets-values-*.json
+**/ssm-values-*.json
+
+# Raw Lambda function dumps (large + may contain env-var secrets)
+**/lambdas-*.json
+**/envvars-*.tsv
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Python / venv
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Terraform local state
+.terraform/
+*.tfstate
+*.tfstate.backup
