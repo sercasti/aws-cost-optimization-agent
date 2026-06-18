@@ -8,14 +8,19 @@
 
 ## What this scan checks
 
-1. **Unattached EBS volumes** (state = available, no instance ID in `Attachments`).
+1. **Unattached EBS volumes** (state = available, no instance ID in `Attachments`) -- includes io1, io2, gp2, gp3 types.
 2. **Unassociated Elastic IPs** (~$3.60/mo each at standard pricing).
 3. **Idle NAT Gateways** (zero outbound bytes in 30 days, ~$32/mo each).
-4. **CloudWatch alarms in INSUFFICIENT_DATA** for 30+ days (~$0.10/mo each).
-5. **CloudWatch log groups without retention** (unbounded future cost).
-6. **DevOps Guru coverage status** (often left enabled with no review process, ~$10-50/mo).
-7. **ECR repository storage** (orphaned container images, sometimes substantial).
-8. **EFS filesystems with 0 GB stored** (phantom resources, $0 cost but hygiene).
+4. **NAT Gateways in VPCs without S3 or DynamoDB gateway endpoints** (avoidable data-transfer cost, free fix). See `runbooks/managed-services-inventory.md` Phase 5.
+5. **CloudWatch alarms in INSUFFICIENT_DATA** for 30+ days (~$0.10/mo each).
+6. **CloudWatch log groups without retention** (unbounded future cost).
+7. **DevOps Guru coverage status** (often left enabled with no review process, ~$10-50/mo).
+8. **ECR repository storage** (orphaned container images, sometimes substantial).
+9. **EFS filesystems with 0 GB stored** (phantom resources, $0 cost but hygiene).
+10. **ECS clusters with Container Insights enabled on non-prod** ($56/cluster/mo flat). See `runbooks/managed-services-inventory.md` Phase 3.
+11. **Transfer Family SFTP servers with zero transfers in 30 days** ($216/mo per server). See `runbooks/managed-services-inventory.md` Phase 1.
+12. **Amazon MQ brokers with zero messages in 30 days**. See `runbooks/managed-services-inventory.md` Phase 2.
+13. **AWS Backup plan CopyActions self-copy + no retention** (see `runbooks/backup-plan-audit.md`).
 
 ## Per-account scan template
 
@@ -58,6 +63,31 @@ sweep() {
   echo "--- Log groups without retention ---"
   aws logs describe-log-groups --region $region --profile $profile \
     --query 'logGroups[?retentionInDays==`null`].[logGroupName,storedBytes]' --output table
+
+  echo "--- ECS clusters with Container Insights ---"
+  for arn in $(aws ecs list-clusters --profile $profile --region $region --query 'clusterArns[]' --output text | tr '\t\r' '\n\n'); do
+    aws ecs describe-clusters --clusters "$arn" --include SETTINGS \
+      --profile $profile --region $region \
+      --query 'clusters[?settings[?name==`containerInsights`&&value==`enabled`]].clusterName' \
+      --output text
+  done
+
+  echo "--- Transfer Family servers ---"
+  aws transfer list-servers --profile $profile --region $region \
+    --query 'Servers[].[ServerId,State]' --output table 2>/dev/null || echo "(no Transfer Family access or not available)"
+
+  echo "--- Amazon MQ brokers ---"
+  aws mq list-brokers --profile $profile --region $region \
+    --query 'BrokerSummaries[].[BrokerName,BrokerState,DeploymentMode]' --output table 2>/dev/null || echo "(no MQ access or not available)"
+
+  echo "--- NAT GW without gateway endpoints ---"
+  aws ec2 describe-nat-gateways --profile $profile --region $region \
+    --filter Name=state,Values=available \
+    --query 'NatGateways[].[NatGatewayId,VpcId]' --output text
+  echo "  Gateway endpoints present:"
+  aws ec2 describe-vpc-endpoints --profile $profile --region $region \
+    --filters Name=vpc-endpoint-type,Values=Gateway Name=state,Values=available \
+    --query 'VpcEndpoints[].[VpcId,ServiceName]' --output text
 }
 
 sweep account-1-profile us-east-1 "Account 1"

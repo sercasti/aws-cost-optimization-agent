@@ -19,16 +19,22 @@ The agent applies a 4-phase engagement model. Each phase has a different risk pr
 
 **Specific scans the agent runs**:
 
-- Stopped EC2 instances older than 30 days (EBS still bills).
+- Stopped EC2 instances older than 30 days (EBS still bills). Check `deleteOnTermination=false` flags before terminating -- see `docs/failure-modes.md` entry 11.
 - RDS instances with avg connections < 1 over 14 days.
-- DMS replication instances with zero CDC datapoints over 14 days.
-- Storage classes with mis-sized provisioned IOPS (io2 throttling, gp2 baseline ceilings).
+- DMS replication instances with status `ready` or zero CDC datapoints over 14 days. `ready` is a stronger idle signal than `stopped`.
+- Storage classes with mis-sized provisioned IOPS (io2, io1 throttling; gp2 baseline ceilings). All three types are candidates for gp3 migration.
 - Manual RDS snapshots whose source DB no longer exists.
 - AMIs whose backing snapshots no longer exist or vice versa.
 - Unassociated Elastic IPs (~$3.60/mo each at standard pricing).
 - NAT Gateways with < 1 GB outbound bytes in 30 days.
+- NAT Gateways in VPCs without S3 or DynamoDB gateway endpoints (free endpoints that eliminate avoidable NAT data transfer cost). See `runbooks/managed-services-inventory.md`.
 - Log groups without retention.
 - DevOps Guru coverage status.
+- AWS Backup plan audit: CopyActions pointing to same vault as target (self-copy, doubles storage with no DR benefit), and rules with no `DeleteAfterDays` (vault grows indefinitely). See `runbooks/backup-plan-audit.md` and `docs/failure-modes.md` entry 9.
+- ECS clusters with Container Insights enabled -- flag non-prod clusters ($56/cluster/mo flat). See `runbooks/managed-services-inventory.md`.
+- Transfer Family SFTP servers with zero transfers in 30 days ($216/mo per always-on server).
+- Amazon MQ brokers with zero messages in 30 days.
+- Cost Optimization Hub: `cost-optimization-hub list-recommendations` in us-east-1. Use as a sanity check against bottom-up analysis. Note the 1-2 day lag on deleted resources -- see `docs/failure-modes.md` entry 10.
 
 ## Phase 2: Walk (Quick Wins, days 5-15)
 

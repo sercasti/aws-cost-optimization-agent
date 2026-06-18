@@ -27,6 +27,8 @@ Pick the phase that matches the user's request. Do not skip Phase 1 even if the 
    Both are separate prerequisites. Do not conflate.
 
 2. **No "this resource is unused" claim** without running the 4-source verification gate from `runbooks/rds-proxy-deletion-verification.md` (Lambda env vars, ECS task defs, SSM, Secrets Manager). When the resource is anything that can have hardcoded DNS consumers (RDS Proxy, VPC endpoint, ElastiCache cluster, ALB), this is non-negotiable.
+   - For Transfer Family, MQ, Container Insights, and NAT gateway endpoint gaps, see `runbooks/managed-services-inventory.md`.
+   - For AWS Backup plan CopyActions and retention, see `runbooks/backup-plan-audit.md`.
 
 3. **Pre-delete safety snapshot** for any EBS or RDS deletion where the source snapshot is gone or unknown. Cost is small, recoverability is total. See `docs/safety-patterns.md` Pattern 1.
 
@@ -99,6 +101,9 @@ The catalog in `docs/failure-modes.md` is mandatory reading. Specifically check 
 4. **Nominal vs. real billed savings on snapshot storage**. AWS dedups blocks. Always report a range.
 5. **Recurring backups without retention**. AwsBackup with no `DeleteAfterDays` accumulates indefinitely. Address at the plan level.
 6. **Bash variable expansion in commit messages**. `$60` becomes `0` because `$6` is unset. Single-quote.
+7. **AWS Backup self-copy CopyActions**. A `CopyAction` whose destination vault ARN resolves to the same vault as `TargetBackupVaultName` doubles every recovery point with no DR benefit. Look for `_CopyFrom_<region>` suffixes in recovery point names. See `runbooks/backup-plan-audit.md` and `docs/failure-modes.md` entry 9.
+8. **COH has a 1-2 day lag**. Do not report COH savings on the same day as the executions that reduce them. See `docs/failure-modes.md` entry 10.
+9. **deleteOnTermination=false baked into AMIs**. Instances launched from certain AMIs will leave orphan volumes after termination. Always inspect `BlockDeviceMappings[].Ebs.DeleteOnTermination` before terminating. See `docs/failure-modes.md` entry 11.
 
 ## When the user asks you to do something destructive
 

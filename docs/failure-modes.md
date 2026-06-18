@@ -116,3 +116,59 @@ Apply to any script that touches SSM, CloudWatch Logs, S3 bucket key prefixes, o
 **Fix**: single-quote the message when it contains dollar signs, OR escape (`\$60`), OR use a heredoc.
 
 **Lesson**: small cosmetic issue but worth catching before the commit lands.
+
+## 9. AWS Backup self-copy CopyActions silently double vault storage
+
+**Symptom**: a backup plan rule had a `CopyAction` pointing to the same vault as `TargetBackupVaultName`. Every daily backup job produced two recovery points -- one primary, one `_CopyFrom_<region>`-suffixed copy -- in the same vault. Storage billed at 2x with zero DR benefit. Not visible as a misconfiguration in the AWS Console backup plan view.
+
+**Root cause**: whoever created the plan intended to copy backups to a second region for DR, but either made a typo on the destination vault ARN or never updated the ARN after the second region vault was decommissioned. AWS Backup does not validate that the source and destination vaults are different.
+
+**How to detect**: `aws backup get-backup-plan` returns `Rules[].CopyActions[].DestinationBackupVaultArn`. Parse the last segment of the ARN (after the final `:`) and compare to `Rules[].TargetBackupVaultName`. Match = self-copy. Also: look for recovery points in the vault whose names end in `_CopyFrom_<region>` or `(Copy)`.
+
+**Fix**: `aws backup update-backup-plan` with `CopyActions: []` on the affected rule. Requires the full rules block -- the API replaces all rules, not a single rule patch.
+
+**Lesson**: never audit only the backup plan console view. Always inspect `get-backup-plan` JSON per plan. The self-copy pattern accumulates silently and can double a vault's cost over months before anyone notices.
+
+**Engagement ref**: Tecnocontrol plans RespaldoDiario and PlanCompletoRespaldoDiario, fixed 2026-06-17. Combined with retention reduction: $2,837/mo captured.
+
+## 10. Cost Optimization Hub has a 1-2 day lag on deleted resources
+
+**Symptom**: deleted a large set of EBS volumes and AMIs in the afternoon. Ran `cost-optimization-hub list-recommendations` the same day and the savings figure was unchanged. Looked like the deletions hadn't registered.
+
+**Root cause**: COH aggregates recommendations on a daily cycle. Resources deleted today do not disappear from COH recommendations until the next aggregation, typically 24-48 hours later.
+
+**Fix**: do not report COH savings on the same day as the executions that should reduce them. Pull COH on Monday, execute Quick Wins Tuesday through Thursday, re-pull COH on the following Tuesday. The delta reflects the actual change.
+
+**Lesson**: never double-count COH estimates and same-day execution savings in the same report. Use COH as a sanity check against your bottom-up analysis, not as a real-time execution tracker. If COH total is within 10-20% of your bottom-up number, you've covered the main categories. If it's 2x off, you're missing something.
+
+## 11. deleteOnTermination=false baked into AMIs leaves orphan volumes after instance termination
+
+**Symptom**: terminated a stopped EC2 instance as part of cleanup. Expected all attached EBS volumes to be deleted. Post-termination scan found multiple large volumes still in `available` state (orphaned). The `deleteOnTermination` flag had been explicitly set to `false` in the AMI's block device mapping when the AMI was created.
+
+**Root cause**: AMI block device mappings include `DeleteOnTermination` per volume. If set to `false` -- which is sometimes done intentionally for data volumes -- that flag propagates to every instance launched from the AMI. Terminating the instance leaves the volumes as orphans. This is expected AWS behavior, but it surprises teams that aren't aware the flag is baked in at the AMI level.
+
+**How to detect before terminating**: inspect the block device mappings of each instance before terminating:
+
+```bash
+aws ec2 describe-instances --instance-ids $INSTANCE_ID \
+  --profile $PROFILE --region $REGION \
+  --query 'Reservations[0].Instances[0].BlockDeviceMappings[].[DeviceName,Ebs.VolumeId,Ebs.DeleteOnTermination]' \
+  --output table
+```
+
+Any volume with `DeleteOnTermination=false` will survive the termination.
+
+**Fix before terminating**: modify the attribute on the running/stopped instance (not the AMI, which is already locked):
+
+```bash
+aws ec2 modify-instance-attribute \
+  --instance-id $INSTANCE_ID \
+  --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"DeleteOnTermination":true}}]' \
+  --profile $PROFILE --region $REGION
+```
+
+Repeat for each data volume device name. Verify with `describe-instances` before terminating.
+
+**Lesson**: add a `deleteOnTermination` audit to the pre-termination checklist for any stopped EC2 cleanup batch. One missed volume on a 2 TB data disk is $200/mo of residual cost that shows up weeks later in the next hygiene sweep.
+
+**Engagement ref**: surfaced during Tecnocontrol batch termination planning, 2026-06-16.
