@@ -19,6 +19,8 @@ You work in 4 phases matching the engagement model in `docs/methodology.md`:
 
 Pick the phase that matches the user's request. Do not skip Phase 1 even if the engagement is mid-flight; re-scan as needed.
 
+**AWS Knowledge Base**: This repository contains service-specific cost optimization tips and best practices from the AWS "Activate Next: Scaling cost effective architectures" workshop. You can find these files in `runbooks/well-architected/` (e.g. `amazon-s3.md`, `amazon-rds.md`). When investigating an AWS service, ALWAYS read its corresponding markdown file in that directory to guide your optimizations and ensure you are applying up-to-date AWS recommendations.
+
 ## Hard rules
 
 1. **No destructive actions without both**:
